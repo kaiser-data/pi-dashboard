@@ -179,23 +179,36 @@ HTML = """<!DOCTYPE html>
   }
   .agent-card.active-card { border-color: #1e3a5f; }
   .agent-header {
-    display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+    display: flex; align-items: center; gap: 10px; margin-bottom: 16px;
   }
-  .agent-emoji { font-size: 22px; line-height: 1; }
+  .agent-emoji { font-size: 24px; line-height: 1; }
   .agent-name { font-size: 15px; font-weight: 600; color: #fff; }
-  .agent-bot  { font-size: 11px; color: #444; margin-top: 1px; }
+  .agent-bot  { font-size: 11px; color: #444; margin-top: 2px; }
+  .agent-kpis {
+    display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 14px;
+  }
+  .kpi { background: #111; border-radius: 8px; padding: 10px 12px; }
+  .kpi-val   { font-size: 26px; font-weight: 700; color: #fff; line-height: 1; }
+  .kpi-label { font-size: 10px; text-transform: uppercase; letter-spacing: 0.8px;
+               color: #444; margin-top: 4px; }
   .agent-stat { display: flex; justify-content: space-between; padding: 5px 0;
-                border-bottom: 1px solid #1f1f1f; font-size: 12px; }
-  .agent-stat:last-child { border-bottom: none; }
+                border-top: 1px solid #1f1f1f; font-size: 12px; }
   .stat-label { color: #555; }
-  .stat-val   { color: #ccc; font-weight: 500; }
+  .stat-val   { color: #888; font-weight: 500; }
 
   /* Activity chart */
   .activity-card {
     background: #1a1a1a; border: 1px solid #2a2a2a;
-    border-radius: 12px; padding: 18px; margin-bottom: 20px;
+    border-radius: 12px; padding: 20px; margin-bottom: 20px;
   }
-  .activity-card .card-label { margin-bottom: 14px; }
+  .activity-card .card-label { margin-bottom: 14px; font-size: 11px; }
+  .chart-legend {
+    display: flex; gap: 16px; flex-wrap: wrap; margin-bottom: 14px;
+  }
+  .legend-item {
+    display: flex; align-items: center; gap: 6px; font-size: 11px; color: #666;
+  }
+  .legend-dot { width: 8px; height: 8px; border-radius: 2px; flex-shrink: 0; }
 
   /* Time selector */
   .time-selector {
@@ -333,8 +346,9 @@ HTML = """<!DOCTYPE html>
 <div class="agent-grid" id="agent-cards"></div>
 
 <div class="activity-card">
-  <div class="card-label">Sessions started — last 14 days</div>
-  <canvas id="chart-activity" height="140"></canvas>
+  <div class="card-label">Messages per day — last 14 days</div>
+  <div class="chart-legend" id="agent-legend"></div>
+  <canvas id="chart-activity" height="160"></canvas>
 </div>
 <div class="updated" id="agents-updated">—</div>
 </div><!-- /panel-agents -->
@@ -514,55 +528,66 @@ async function refresh() {
 }
 
 // ── Activity bar chart ──────────────────────────────────────────────────────
+const AGENT_COLORS  = ['#3b82f6','#10b981','#f59e0b','#8b5cf6'];
+const AGENT_LABELS  = ['Main','Fitness','Career','Learning'];
+
 function drawActivity(days, counts) {
   const canvas = document.getElementById('chart-activity');
   if (!canvas) return;
-  const agents = Object.keys(counts);
-  const colors = ['#3b82f6','#10b981','#f59e0b','#8b5cf6'];
-  const dpr = window.devicePixelRatio || 1;
-  const W = canvas.offsetWidth || 600;
-  const H = 140;
+  const aids   = Object.keys(counts);
+  const dpr    = window.devicePixelRatio || 1;
+  const W      = canvas.offsetWidth || 640;
+  const H      = 160;
   canvas.width  = W * dpr; canvas.height = H * dpr;
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
   const ctx = canvas.getContext('2d');
   ctx.scale(dpr, dpr);
 
-  const pad = {top:8, right:8, bottom:28, left:28};
-  const cw = W - pad.left - pad.right;
-  const ch = H - pad.top - pad.bottom;
-  const n  = days.length;
-  const maxVal = Math.max(1, ...agents.flatMap(a => counts[a]));
+  const pad = {top: 10, right: 10, bottom: 32, left: 36};
+  const cw  = W - pad.left - pad.right;
+  const ch  = H - pad.top  - pad.bottom;
+  const n   = days.length;
 
+  // Max value across all agents/days
+  const maxVal = Math.max(1, ...aids.flatMap(a => counts[a]));
+
+  // Y-axis grid lines + labels
+  const yTicks = 4;
+  ctx.font = '9px sans-serif';
+  ctx.textAlign = 'right';
+  for (let i = 0; i <= yTicks; i++) {
+    const v = Math.round((maxVal / yTicks) * i);
+    const y = pad.top + ch - (i / yTicks) * ch;
+    ctx.strokeStyle = '#1e1e1e'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(pad.left, y); ctx.lineTo(pad.left + cw, y); ctx.stroke();
+    ctx.fillStyle = '#3a3a3a';
+    ctx.fillText(v, pad.left - 5, y + 3);
+  }
+
+  // Grouped bars
   const groupW = cw / n;
-  const barW   = Math.max(2, groupW / agents.length - 2);
+  const gap    = 2;
+  const barW   = Math.max(2, (groupW - gap * (aids.length + 1)) / aids.length);
 
-  agents.forEach((aid, ai) => {
-    ctx.fillStyle = colors[ai % colors.length];
+  aids.forEach((aid, ai) => {
+    ctx.fillStyle = AGENT_COLORS[ai % AGENT_COLORS.length];
     counts[aid].forEach((v, di) => {
-      const x = pad.left + di * groupW + ai * (barW + 1);
-      const bh = Math.max(1, (v / maxVal) * ch);
+      if (v === 0) return;
+      const bh = (v / maxVal) * ch;
+      const x  = pad.left + di * groupW + gap + ai * (barW + gap);
       ctx.fillRect(x, pad.top + ch - bh, barW, bh);
     });
   });
 
-  // X labels (every 2 days)
-  ctx.fillStyle = '#3a3a3a'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+  // X-axis day labels — show every 2nd day, short format "04/05"
+  ctx.fillStyle = '#3a3a3a'; ctx.textAlign = 'center';
   days.forEach((d, i) => {
-    if (i % 2 === 0) {
-      const x = pad.left + i * groupW + groupW / 2;
-      ctx.fillText(d.slice(5), x, H - 5);
-    }
-  });
-
-  // Legend
-  ctx.font = '9px sans-serif'; ctx.textAlign = 'left';
-  const labels = ['Main','Fitness','Career','Learning'];
-  agents.forEach((aid, ai) => {
-    const lx = pad.left + ai * 70;
-    ctx.fillStyle = colors[ai % colors.length];
-    ctx.fillRect(lx, pad.top, 8, 8);
-    ctx.fillStyle = '#555';
-    ctx.fillText(labels[ai] || aid, lx + 11, pad.top + 8);
+    if (i % 2 !== 0) return;
+    const x = pad.left + i * groupW + groupW / 2;
+    // d = "2026-04-05" → "04/05"
+    ctx.fillText(d.slice(5).replace('-','/'), x, H - 6);
+    ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, pad.top); ctx.lineTo(x, pad.top + ch); ctx.stroke();
   });
 }
 
@@ -571,16 +596,30 @@ async function refreshAgents() {
   try {
     const r = await fetch('/agents');
     const d = await r.json();
-    const grid = document.getElementById('agent-cards');
-    grid.innerHTML = d.agents.map(a => `
+
+    // Cards
+    document.getElementById('agent-cards').innerHTML = d.agents.map(a => `
       <div class="agent-card${a.messages > 0 ? ' active-card' : ''}">
         <div class="agent-header">
           <span class="agent-emoji">${a.emoji}</span>
           <div><div class="agent-name">${a.name}</div><div class="agent-bot">${a.bot}</div></div>
         </div>
-        <div class="agent-stat"><span class="stat-label">Sessions (30d)</span><span class="stat-val">${a.messages}</span></div>
-        <div class="agent-stat"><span class="stat-label">Last seen</span><span class="stat-val">${a.last_seen}</span></div>
+        <div class="agent-kpis">
+          <div class="kpi"><div class="kpi-val">${a.messages}</div><div class="kpi-label">Messages</div></div>
+          <div class="kpi"><div class="kpi-val">${a.sessions}</div><div class="kpi-label">Sessions</div></div>
+        </div>
+        <div class="agent-stat">
+          <span class="stat-label">Last active</span>
+          <span class="stat-val">${a.last_seen}</span>
+        </div>
       </div>`).join('');
+
+    // Legend
+    document.getElementById('agent-legend').innerHTML = AGENT_LABELS.map((l, i) => `
+      <div class="legend-item">
+        <span class="legend-dot" style="background:${AGENT_COLORS[i]}"></span>${l}
+      </div>`).join('');
+
     drawActivity(d.activity.days, d.activity.counts);
     document.getElementById('agents-updated').textContent =
       'updated ' + new Date().toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
@@ -716,14 +755,16 @@ AGENTS = [
 ]
 
 
-def _read_session_timestamps(agent_id):
-    """Return list of Unix timestamps for every session of this agent (last 30 days)."""
+def _parse_agent_sessions(agent_id, cutoff):
+    """
+    Read all session files for an agent newer than cutoff.
+    Returns list of dicts: {ts, user_msgs, asst_msgs}
+    """
     sessions_dir = os.path.join(AGENTS_BASE, agent_id, "sessions")
     if not os.path.isdir(sessions_dir):
         return []
 
-    cutoff = time.time() - 30 * 86400
-    timestamps = []
+    results = []
     try:
         for fname in os.listdir(sessions_dir):
             if not fname.endswith(".jsonl"):
@@ -731,55 +772,68 @@ def _read_session_timestamps(agent_id):
             fpath = os.path.join(sessions_dir, fname)
             try:
                 with open(fpath) as f:
-                    first = f.readline()
-                d = json.loads(first)
-                ts_str = d.get("timestamp", "")
-                if ts_str:
-                    # ISO 8601: "2026-04-05T08:19:32.172Z"
-                    ts = time.mktime(time.strptime(ts_str[:19], "%Y-%m-%dT%H:%M:%S"))
-                    # Adjust for UTC offset (strptime assumes local, timestamps are UTC)
-                    ts -= time.timezone
-                    if ts >= cutoff:
-                        timestamps.append(ts)
+                    first_line = f.readline()
+                    d = json.loads(first_line)
+                    ts_str = d.get("timestamp", "")
+                    if not ts_str:
+                        continue
+                    ts = time.mktime(time.strptime(ts_str[:19], "%Y-%m-%dT%H:%M:%S")) - time.timezone
+                    if ts < cutoff:
+                        continue
+                    user_msgs = asst_msgs = 0
+                    for line in f:
+                        try:
+                            ev = json.loads(line)
+                            if ev.get("type") == "message":
+                                role = ev.get("message", {}).get("role", "")
+                                if role == "user":
+                                    user_msgs += 1
+                                elif role == "assistant":
+                                    asst_msgs += 1
+                        except Exception:
+                            pass
+                results.append({"ts": ts, "user_msgs": user_msgs, "asst_msgs": asst_msgs})
             except Exception:
                 pass
     except Exception:
         pass
-    return timestamps
+    return results
 
 
 def get_agent_stats():
-    """Count sessions per agent from their session JSONL files."""
+    """Aggregate per-agent stats from session JSONL files."""
     now = time.time()
+    cutoff_30 = now - 30 * 86400
     agents_out = []
 
     for agent in AGENTS:
         aid = agent["id"]
-        timestamps = _read_session_timestamps(aid)
-        session_count = len(timestamps)
-        last_ts = max(timestamps) if timestamps else None
+        sessions = _parse_agent_sessions(aid, cutoff_30)
+
+        total_sessions  = len(sessions)
+        total_user_msgs = sum(s["user_msgs"] for s in sessions)
+        total_asst_msgs = sum(s["asst_msgs"] for s in sessions)
+        last_ts = max((s["ts"] for s in sessions), default=None)
 
         if last_ts:
             diff = now - last_ts
-            if diff < 60:
-                last_seen = "just now"
-            elif diff < 3600:
-                last_seen = f"{int(diff//60)}m ago"
-            elif diff < 86400:
-                last_seen = f"{int(diff//3600)}h ago"
-            else:
-                last_seen = f"{int(diff//86400)}d ago"
+            if diff < 60:      last_seen = "just now"
+            elif diff < 3600:  last_seen = f"{int(diff//60)}m ago"
+            elif diff < 86400: last_seen = f"{int(diff//3600)}h ago"
+            else:              last_seen = f"{int(diff//86400)}d ago"
         else:
             last_seen = "never"
 
         agents_out.append({
-            "id":        aid,
-            "name":      agent["name"],
-            "emoji":     agent["emoji"],
-            "bot":       agent["bot"],
-            "messages":  session_count,
+            "id":       aid,
+            "name":     agent["name"],
+            "emoji":    agent["emoji"],
+            "bot":      agent["bot"],
+            "sessions": total_sessions,
+            "messages": total_user_msgs,
+            "replies":  total_asst_msgs,
             "last_seen": last_seen,
-            "last_ts":   int(last_ts) if last_ts else 0,
+            "last_ts":  int(last_ts) if last_ts else 0,
         })
 
     activity = _agent_activity_by_day()
@@ -787,24 +841,24 @@ def get_agent_stats():
 
 
 def _agent_activity_by_day():
-    """Count sessions per agent per day for last 14 days."""
+    """Count user messages per agent per day for last 14 days."""
     days = []
     for i in range(13, -1, -1):
-        t = time.localtime(time.time() - i * 86400)
-        days.append(time.strftime("%Y-%m-%d", t))
+        days.append(time.strftime("%Y-%m-%d", time.localtime(time.time() - i * 86400)))
 
     counts = {d: {a["id"]: 0 for a in AGENTS} for d in days}
+    cutoff = time.time() - 14 * 86400
 
     for agent in AGENTS:
         aid = agent["id"]
-        for ts in _read_session_timestamps(aid):
-            day = time.strftime("%Y-%m-%d", time.localtime(ts))
+        for s in _parse_agent_sessions(aid, cutoff):
+            day = time.strftime("%Y-%m-%d", time.localtime(s["ts"]))
             if day in counts:
-                counts[day][aid] += 1
+                counts[day][aid] += s["user_msgs"]
 
     return {
         "days":   days,
-        "counts": {a["id"]: [counts[d][a["id"]] for d in days] for a in AGENTS}
+        "counts": {a["id"]: [counts[d][a["id"]] for d in days] for a in AGENTS},
     }
 
 
