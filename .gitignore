@@ -1,0 +1,5 @@
+*.pyc
+__pycache__/
+history.jsonl
+*.log
+.DS_Store
