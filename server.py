@@ -152,6 +152,51 @@ HTML = """<!DOCTYPE html>
   .bar.warn { background: #f59e0b; }
   .bar.hot  { background: #ef4444; }
 
+  /* Tabs */
+  .tabs {
+    display: flex; gap: 2px; margin-bottom: 24px;
+    border-bottom: 1px solid #1f1f1f; padding-bottom: 0;
+  }
+  .tab {
+    padding: 8px 18px; font-size: 13px; font-weight: 500;
+    color: #444; cursor: pointer; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: all 0.15s;
+  }
+  .tab:hover { color: #888; }
+  .tab.active { color: #fff; border-bottom-color: #3b82f6; }
+  .tab-panel { display: none; }
+  .tab-panel.active { display: block; }
+
+  /* Agent cards */
+  .agent-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 14px; margin-bottom: 20px;
+  }
+  .agent-card {
+    background: #1a1a1a; border: 1px solid #2a2a2a;
+    border-radius: 12px; padding: 18px;
+  }
+  .agent-card.active-card { border-color: #1e3a5f; }
+  .agent-header {
+    display: flex; align-items: center; gap: 10px; margin-bottom: 14px;
+  }
+  .agent-emoji { font-size: 22px; line-height: 1; }
+  .agent-name { font-size: 15px; font-weight: 600; color: #fff; }
+  .agent-bot  { font-size: 11px; color: #444; margin-top: 1px; }
+  .agent-stat { display: flex; justify-content: space-between; padding: 5px 0;
+                border-bottom: 1px solid #1f1f1f; font-size: 12px; }
+  .agent-stat:last-child { border-bottom: none; }
+  .stat-label { color: #555; }
+  .stat-val   { color: #ccc; font-weight: 500; }
+
+  /* Activity chart */
+  .activity-card {
+    background: #1a1a1a; border: 1px solid #2a2a2a;
+    border-radius: 12px; padding: 18px; margin-bottom: 20px;
+  }
+  .activity-card .card-label { margin-bottom: 14px; }
+
   /* Time selector */
   .time-selector {
     display: flex; gap: 6px; margin-bottom: 16px; flex-wrap: wrap;
@@ -206,6 +251,12 @@ HTML = """<!DOCTYPE html>
 <body>
 <h1>pi-claw-agent <span id="clock"></span></h1>
 
+<div class="tabs">
+  <div class="tab active" onclick="showTab('system',this)">System</div>
+  <div class="tab" onclick="showTab('agents',this)">Agents</div>
+</div>
+
+<div id="panel-system" class="tab-panel active">
 <div class="grid">
   <div class="card">
     <div class="card-label">CPU Temp</div>
@@ -276,8 +327,28 @@ HTML = """<!DOCTYPE html>
 </div>
 
 <div class="updated">auto-refresh every 5s</div>
+</div><!-- /panel-system -->
+
+<div id="panel-agents" class="tab-panel">
+<div class="agent-grid" id="agent-cards"></div>
+
+<div class="activity-card">
+  <div class="card-label">Sessions started — last 14 days</div>
+  <canvas id="chart-activity" height="140"></canvas>
+</div>
+<div class="updated" id="agents-updated">—</div>
+</div><!-- /panel-agents -->
 
 <script>
+// ── Tab switcher ────────────────────────────────────────────────────────────
+function showTab(name, el) {
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  el.classList.add('active');
+  if (name === 'agents') refreshAgents();
+}
+
 // ── Chart renderer ─────────────────────────────────────────────────────────
 // windowSecs = selected time window in seconds
 function drawChart(canvasId, data, color, unit, windowSecs, intervalSecs) {
@@ -442,10 +513,86 @@ async function refresh() {
   } catch(e) {}
 }
 
+// ── Activity bar chart ──────────────────────────────────────────────────────
+function drawActivity(days, counts) {
+  const canvas = document.getElementById('chart-activity');
+  if (!canvas) return;
+  const agents = Object.keys(counts);
+  const colors = ['#3b82f6','#10b981','#f59e0b','#8b5cf6'];
+  const dpr = window.devicePixelRatio || 1;
+  const W = canvas.offsetWidth || 600;
+  const H = 140;
+  canvas.width  = W * dpr; canvas.height = H * dpr;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  const pad = {top:8, right:8, bottom:28, left:28};
+  const cw = W - pad.left - pad.right;
+  const ch = H - pad.top - pad.bottom;
+  const n  = days.length;
+  const maxVal = Math.max(1, ...agents.flatMap(a => counts[a]));
+
+  const groupW = cw / n;
+  const barW   = Math.max(2, groupW / agents.length - 2);
+
+  agents.forEach((aid, ai) => {
+    ctx.fillStyle = colors[ai % colors.length];
+    counts[aid].forEach((v, di) => {
+      const x = pad.left + di * groupW + ai * (barW + 1);
+      const bh = Math.max(1, (v / maxVal) * ch);
+      ctx.fillRect(x, pad.top + ch - bh, barW, bh);
+    });
+  });
+
+  // X labels (every 2 days)
+  ctx.fillStyle = '#3a3a3a'; ctx.font = '9px sans-serif'; ctx.textAlign = 'center';
+  days.forEach((d, i) => {
+    if (i % 2 === 0) {
+      const x = pad.left + i * groupW + groupW / 2;
+      ctx.fillText(d.slice(5), x, H - 5);
+    }
+  });
+
+  // Legend
+  ctx.font = '9px sans-serif'; ctx.textAlign = 'left';
+  const labels = ['Main','Fitness','Career','Learning'];
+  agents.forEach((aid, ai) => {
+    const lx = pad.left + ai * 70;
+    ctx.fillStyle = colors[ai % colors.length];
+    ctx.fillRect(lx, pad.top, 8, 8);
+    ctx.fillStyle = '#555';
+    ctx.fillText(labels[ai] || aid, lx + 11, pad.top + 8);
+  });
+}
+
+// ── Agents refresh ──────────────────────────────────────────────────────────
+async function refreshAgents() {
+  try {
+    const r = await fetch('/agents');
+    const d = await r.json();
+    const grid = document.getElementById('agent-cards');
+    grid.innerHTML = d.agents.map(a => `
+      <div class="agent-card${a.messages > 0 ? ' active-card' : ''}">
+        <div class="agent-header">
+          <span class="agent-emoji">${a.emoji}</span>
+          <div><div class="agent-name">${a.name}</div><div class="agent-bot">${a.bot}</div></div>
+        </div>
+        <div class="agent-stat"><span class="stat-label">Sessions (30d)</span><span class="stat-val">${a.messages}</span></div>
+        <div class="agent-stat"><span class="stat-label">Last seen</span><span class="stat-val">${a.last_seen}</span></div>
+      </div>`).join('');
+    drawActivity(d.activity.days, d.activity.counts);
+    document.getElementById('agents-updated').textContent =
+      'updated ' + new Date().toLocaleTimeString('de-DE', {hour:'2-digit',minute:'2-digit',second:'2-digit'});
+  } catch(e) {}
+}
+
 setInterval(tick, 1000);
 setInterval(refresh, 5000);
+setInterval(refreshAgents, 30000);
 tick();
 refresh();
+refreshAgents();
 window.addEventListener('resize', refresh);
 </script>
 </body>
@@ -557,6 +704,110 @@ def get_stats():
     }
 
 
+# ── Agent activity reader ──────────────────────────────────────────────────
+
+AGENTS_BASE = "/home/openclaw/.openclaw/agents"
+
+AGENTS = [
+    {"id": "main",     "name": "MK-Pi-Claw",  "emoji": "🦀", "bot": "@MK_Pi_Claw_Bot"},
+    {"id": "fitness",  "name": "FitClaw",      "emoji": "💪", "bot": "@MKFitnessBot"},
+    {"id": "career",   "name": "CareerClaw",   "emoji": "💼", "bot": "@MKCareerCoachBot"},
+    {"id": "learning", "name": "LearnClaw",    "emoji": "📚", "bot": "@MKLearningBot"},
+]
+
+
+def _read_session_timestamps(agent_id):
+    """Return list of Unix timestamps for every session of this agent (last 30 days)."""
+    sessions_dir = os.path.join(AGENTS_BASE, agent_id, "sessions")
+    if not os.path.isdir(sessions_dir):
+        return []
+
+    cutoff = time.time() - 30 * 86400
+    timestamps = []
+    try:
+        for fname in os.listdir(sessions_dir):
+            if not fname.endswith(".jsonl"):
+                continue
+            fpath = os.path.join(sessions_dir, fname)
+            try:
+                with open(fpath) as f:
+                    first = f.readline()
+                d = json.loads(first)
+                ts_str = d.get("timestamp", "")
+                if ts_str:
+                    # ISO 8601: "2026-04-05T08:19:32.172Z"
+                    ts = time.mktime(time.strptime(ts_str[:19], "%Y-%m-%dT%H:%M:%S"))
+                    # Adjust for UTC offset (strptime assumes local, timestamps are UTC)
+                    ts -= time.timezone
+                    if ts >= cutoff:
+                        timestamps.append(ts)
+            except Exception:
+                pass
+    except Exception:
+        pass
+    return timestamps
+
+
+def get_agent_stats():
+    """Count sessions per agent from their session JSONL files."""
+    now = time.time()
+    agents_out = []
+
+    for agent in AGENTS:
+        aid = agent["id"]
+        timestamps = _read_session_timestamps(aid)
+        session_count = len(timestamps)
+        last_ts = max(timestamps) if timestamps else None
+
+        if last_ts:
+            diff = now - last_ts
+            if diff < 60:
+                last_seen = "just now"
+            elif diff < 3600:
+                last_seen = f"{int(diff//60)}m ago"
+            elif diff < 86400:
+                last_seen = f"{int(diff//3600)}h ago"
+            else:
+                last_seen = f"{int(diff//86400)}d ago"
+        else:
+            last_seen = "never"
+
+        agents_out.append({
+            "id":        aid,
+            "name":      agent["name"],
+            "emoji":     agent["emoji"],
+            "bot":       agent["bot"],
+            "messages":  session_count,
+            "last_seen": last_seen,
+            "last_ts":   int(last_ts) if last_ts else 0,
+        })
+
+    activity = _agent_activity_by_day()
+    return {"agents": agents_out, "activity": activity}
+
+
+def _agent_activity_by_day():
+    """Count sessions per agent per day for last 14 days."""
+    days = []
+    for i in range(13, -1, -1):
+        t = time.localtime(time.time() - i * 86400)
+        days.append(time.strftime("%Y-%m-%d", t))
+
+    counts = {d: {a["id"]: 0 for a in AGENTS} for d in days}
+
+    for agent in AGENTS:
+        aid = agent["id"]
+        for ts in _read_session_timestamps(aid):
+            day = time.strftime("%Y-%m-%d", time.localtime(ts))
+            if day in counts:
+                counts[day][aid] += 1
+
+    return {
+        "days":   days,
+        "counts": {a["id"]: [counts[d][a["id"]] for d in days] for a in AGENTS}
+    }
+
+
 # ── Background collector ───────────────────────────────────────────────────
 
 _tick_count = 0
@@ -599,7 +850,9 @@ class Handler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if self.path == "/stats":
+        if self.path == "/agents":
+            self.send_json(get_agent_stats())
+        elif self.path == "/stats":
             self.send_json(get_stats())
         elif self.path.startswith("/history"):
             secs = 1800  # default 30 min
